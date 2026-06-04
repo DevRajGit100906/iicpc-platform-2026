@@ -13,9 +13,15 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/redis/go-redis/v9"
 )
 
+var rdb *redis.Client
+
 func main() {
+	// Initialize Redis Connection
+	rdb = redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+
 	http.HandleFunc("/upload", handleUpload)
 
 	fmt.Println("=================================================")
@@ -28,86 +34,89 @@ func main() {
 	}
 }
 
+// updateMatchState acts as the central state machine publisher
+func updateMatchState(runID string, state string) {
+	ctx := context.Background()
+	// Push the state to a Redis Hash
+	err := rdb.HSet(ctx, "match:"+runID, "status", state, "updated_at", time.Now().Unix()).Err()
+	if err != nil {
+		fmt.Printf("[REDIS ERROR] Failed to push state: %v\n", err)
+	} else {
+		fmt.Printf("🔵 [STATE CHANGE] %s -> %s\n", runID, state)
+	}
+}
+
 func handleUpload(w http.ResponseWriter, r *http.Request) {
-	// 1. Accept the Multipart ZIP upload
-	r.ParseMultipartForm(10 << 20) // 10 MB limit
+	r.ParseMultipartForm(10 << 20)
 	file, _, err := r.FormFile("bot")
 	if err != nil {
-		http.Error(w, "Failed to read bot upload. Did you use the 'bot' form field?", http.StatusBadRequest)
+		http.Error(w, "Failed to read bot upload.", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
-	// 2. Create a temporary secure sandbox directory
 	tmpDir, _ := os.MkdirTemp("", "sandbox-*")
-	defer os.RemoveAll(tmpDir) // Self-clean when done
+	defer os.RemoveAll(tmpDir)
 
 	zipPath := filepath.Join(tmpDir, "bot.zip")
 	dst, _ := os.Create(zipPath)
 	io.Copy(dst, file)
 	dst.Close()
 
-	// 3. Unzip the contestant's code
 	unzip(zipPath, tmpDir)
 
-	// 4. Dynamically compile their Docker image
 	runID := fmt.Sprintf("run-%d", time.Now().Unix())
 	imageName := fmt.Sprintf("iicpc-contestant-bot:%s", runID)
 
-	fmt.Printf("\n[RECEIVED] Building contestant image: %s...\n", imageName)
+	// STATE: BUILDING
+	updateMatchState(runID, "BUILDING")
 
-	// We use exec for the build phase to seamlessly handle Dockerfile context
 	cmd := exec.Command("docker", "build", "-t", imageName, tmpDir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		http.Error(w, "Docker build failed. Check your Dockerfile syntax.", http.StatusInternalServerError)
+		updateMatchState(runID, "FAILED")
+		http.Error(w, "Docker build failed.", http.StatusInternalServerError)
 		return
 	}
 
-	// 5. Spin up the sandboxed environment using the Docker SDK
-	containerID := runSandboxedContainer(imageName)
+	// Spin up the sandbox
+	containerID := runSandboxedContainer(imageName, runID)
 
-	successMsg := fmt.Sprintf("✅ Successfully deployed! Run ID: %s | Container: %s\n", runID, containerID)
-	fmt.Print(successMsg)
-	fmt.Fprint(w, successMsg)
+	fmt.Fprintf(w, "✅ Deployed! Run ID: %s | Container: %s\n", runID, containerID)
 }
 
-// runSandboxedContainer uses the Docker Go SDK to spin up the newly built image
-// runSandboxedContainer uses the Docker SDK to securely spin up the image
-func runSandboxedContainer(imageName string) string {
+func runSandboxedContainer(imageName string, runID string) string {
 	ctx := context.Background()
 	cli, _ := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	defer cli.Close()
 
-	containerConfig := &container.Config{
-		Image: imageName,
-	}
-
-	// EPIC B.4: HARDENING THE SANDBOX
+	containerConfig := &container.Config{Image: imageName}
 	hostConfig := &container.HostConfig{
-		AutoRemove: true, // Self-destruct when finished
+		AutoRemove: true,
 		Resources: container.Resources{
-			Memory:   256 * 1024 * 1024, // Limit: 256 MB RAM
-			NanoCPUs: 500000000,         // Limit: 0.5 CPU Cores
+			Memory:   256 * 1024 * 1024,
+			NanoCPUs: 500000000,
 		},
 	}
 
 	resp, _ := cli.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
 
-	// Start a background timebomb to assassinate the container after 15 seconds
-	go func(containerID string) {
+	// STATE: RUNNING
+	updateMatchState(runID, "RUNNING")
+
+	// 15-Second Timebomb
+	go func(cID string, rID string) {
 		time.Sleep(15 * time.Second)
-		fmt.Printf("\n⏱️ Execution limit reached! Terminating container: %s\n", containerID[:12])
-		// Force stop the container (it will auto-remove because of AutoRemove: true)
-		cli.ContainerStop(context.Background(), containerID, container.StopOptions{})
-	}(resp.ID)
+		fmt.Printf("\n⏱️ Timebomb activated! Terminating: %s\n", cID[:12])
+		cli.ContainerStop(context.Background(), cID, container.StopOptions{})
+
+		// STATE: FINISHED
+		updateMatchState(rID, "FINISHED")
+	}(resp.ID, runID)
 
 	return resp.ID[:12]
 }
 
-// unzip is a secure helper utility to extract contestant code
 func unzip(src, dest string) error {
 	r, _ := zip.OpenReader(src)
 	defer r.Close()
