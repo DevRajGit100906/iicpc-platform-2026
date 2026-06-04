@@ -74,16 +74,35 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 // runSandboxedContainer uses the Docker Go SDK to spin up the newly built image
+// runSandboxedContainer uses the Docker SDK to securely spin up the image
 func runSandboxedContainer(imageName string) string {
 	ctx := context.Background()
 	cli, _ := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	defer cli.Close()
 
-	containerConfig := &container.Config{Image: imageName}
-	hostConfig := &container.HostConfig{AutoRemove: true} // Self-destruct when finished
+	containerConfig := &container.Config{
+		Image: imageName,
+	}
+
+	// EPIC B.4: HARDENING THE SANDBOX
+	hostConfig := &container.HostConfig{
+		AutoRemove: true, // Self-destruct when finished
+		Resources: container.Resources{
+			Memory:   256 * 1024 * 1024, // Limit: 256 MB RAM
+			NanoCPUs: 500000000,         // Limit: 0.5 CPU Cores
+		},
+	}
 
 	resp, _ := cli.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
+
+	// Start a background timebomb to assassinate the container after 15 seconds
+	go func(containerID string) {
+		time.Sleep(15 * time.Second)
+		fmt.Printf("\n⏱️ Execution limit reached! Terminating container: %s\n", containerID[:12])
+		// Force stop the container (it will auto-remove because of AutoRemove: true)
+		cli.ContainerStop(context.Background(), containerID, container.StopOptions{})
+	}(resp.ID)
 
 	return resp.ID[:12]
 }
