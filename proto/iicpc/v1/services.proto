@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package iicpc.v1;
+
+import "iicpc/v1/messages.proto";
+
+option go_package = "github.com/YOUR_USERNAME/iicpc-platform-2026/schemas/v1";
+
+// 1. Orchestrator: Handles contestant submissions and state
+service Orchestrator {
+  rpc SubmitEngine(SubmitRequest) returns (SubmitResponse);
+  rpc GetRunStatus(StatusRequest) returns (StatusResponse);
+}
+
+// 2. Sandbox Deployer: Interfaces with Kubernetes/Kata/gVisor
+service SandboxDeployer {
+  rpc DeploySandbox(DeployRequest) returns (DeployResponse);
+  rpc TeardownSandbox(TeardownRequest) returns (TeardownResponse);
+}
+
+// 3. Bot Controller: Manages the distributed load generator
+service BotController {
+  rpc StartLoad(StartLoadRequest) returns (StartLoadResponse);
+  rpc StopLoad(StopLoadRequest) returns (StopLoadResponse);
+}
+
+// 4. Ingester: Receives and processes Redpanda streams
+service Ingester {
+  rpc StreamTelemetry(stream Telemetry) returns (IngestResponse);
+}
+
+// 5. Scoring: Provides the composite scores and leaderboard
+service Scoring {
+  rpc GetLiveLeaderboard(LeaderboardRequest) returns (LeaderboardResponse);
+}
+
+// --- Basic Request/Response Payloads ---
+message SubmitRequest { string contestant_id = 1; string artifact_url = 2; }
+message SubmitResponse { string run_id = 1; }
+message StatusRequest { string run_id = 1; }
+message StatusResponse { string state = 1; }
+message DeployRequest { string run_id = 1; string image_ref = 2; }
+message DeployResponse { bool success = 1; string pod_ip = 2; }
+message TeardownRequest { string run_id = 1; }
+message TeardownResponse { bool success = 1; }
+message StartLoadRequest { string run_id = 1; string target_ip = 2; int32 duration_sec = 3; }
+message StartLoadResponse { bool success = 1; }
+message StopLoadRequest { string run_id = 1; }
+message StopLoadResponse { bool success = 1; }
+message IngestResponse { bool success = 1; }
+message LeaderboardRequest { int32 limit = 1; }
+message LeaderboardResponse { repeated string ranked_contestants = 1; }
