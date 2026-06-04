@@ -38,12 +38,14 @@ func main() {
 func updateMatchState(runID string, state string) {
 	ctx := context.Background()
 	// Push the state to a Redis Hash
-	err := rdb.HSet(ctx, "match:"+runID, "status", state, "updated_at", time.Now().Unix()).Err()
-	if err != nil {
-		fmt.Printf("[REDIS ERROR] Failed to push state: %v\n", err)
-	} else {
-		fmt.Printf("🔵 [STATE CHANGE] %s -> %s\n", runID, state)
+	rdb.HSet(ctx, "match:"+runID, "status", state, "updated_at", time.Now().Unix())
+
+	// NEW: Pre-seed the leaderboard so the run instantly appears in the React UI!
+	if state == "BUILDING" {
+		rdb.ZAdd(ctx, "live_leaderboard", redis.Z{Score: 0, Member: runID})
 	}
+
+	fmt.Printf("🔵 [STATE CHANGE] %s -> %s\n", runID, state)
 }
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +56,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+
 	tmpDir, _ := os.MkdirTemp("", "sandbox-*")
 	defer os.RemoveAll(tmpDir)
 
@@ -90,8 +93,6 @@ func runSandboxedContainer(imageName string, runID string) string {
 
 	containerConfig := &container.Config{
 		Image: imageName,
-		// EPIC D.1: INJECTING THE MATCH CONTEXT
-		// We use host.docker.internal so the container can talk to your Windows host ports
 		Env: []string{
 			"RUN_ID=" + runID,
 			"SUT_URL=http://host.docker.internal:8080",
@@ -101,6 +102,8 @@ func runSandboxedContainer(imageName string, runID string) string {
 
 	hostConfig := &container.HostConfig{
 		AutoRemove: true,
+		// THE FIX: Explicitly bridge the container to the Windows Host!
+		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 		Resources: container.Resources{
 			Memory:   256 * 1024 * 1024,
 			NanoCPUs: 500000000,
@@ -109,6 +112,12 @@ func runSandboxedContainer(imageName string, runID string) string {
 
 	resp, _ := cli.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	cli.ContainerStart(ctx, resp.ID, container.StartOptions{})
+
+	// NEW: X-Ray Vision! Stream the isolated bot's internal logs directly to our terminal
+	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true, Follow: true})
+	if err == nil {
+		go io.Copy(os.Stdout, out)
+	}
 
 	// STATE: RUNNING
 	updateMatchState(runID, "RUNNING")
