@@ -12,12 +12,13 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true }, // Allow all origins for the hackathon local slice
+	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
 type LeaderboardRow struct {
-	RunID string  `json:"run_id"`
-	Score float64 `json:"score"`
+	RunID  string  `json:"run_id"`
+	Score  float64 `json:"score"`
+	Status string  `json:"status"` // NEW: The Live Match State
 }
 
 func main() {
@@ -34,9 +35,8 @@ func main() {
 
 		fmt.Println("Frontend connected to WebSocket!")
 
-		// Stream the leaderboard every 500ms
 		for {
-			// Fetch the top 10 from Redis ZSET (Highest score first)
+			// Fetch the top 10 scores
 			vals, err := rdb.ZRevRangeWithScores(ctx, "live_leaderboard", 0, 9).Result()
 			if err != nil {
 				time.Sleep(1 * time.Second)
@@ -45,13 +45,21 @@ func main() {
 
 			var board []LeaderboardRow
 			for _, z := range vals {
+				runID := z.Member.(string)
+
+				// NEW: Fetch the live state from the Match State Machine
+				status, _ := rdb.HGet(ctx, "match:"+runID, "status").Result()
+				if status == "" {
+					status = "UNKNOWN"
+				}
+
 				board = append(board, LeaderboardRow{
-					RunID: z.Member.(string),
-					Score: z.Score,
+					RunID:  runID,
+					Score:  z.Score,
+					Status: status,
 				})
 			}
 
-			// Push to the React frontend
 			msg, _ := json.Marshal(board)
 			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 				fmt.Println("Frontend disconnected.")
