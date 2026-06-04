@@ -54,7 +54,6 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-
 	tmpDir, _ := os.MkdirTemp("", "sandbox-*")
 	defer os.RemoveAll(tmpDir)
 
@@ -89,7 +88,17 @@ func runSandboxedContainer(imageName string, runID string) string {
 	cli, _ := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	defer cli.Close()
 
-	containerConfig := &container.Config{Image: imageName}
+	containerConfig := &container.Config{
+		Image: imageName,
+		// EPIC D.1: INJECTING THE MATCH CONTEXT
+		// We use host.docker.internal so the container can talk to your Windows host ports
+		Env: []string{
+			"RUN_ID=" + runID,
+			"SUT_URL=http://host.docker.internal:8080",
+			"KAFKA_BROKER=host.docker.internal:9092",
+		},
+	}
+
 	hostConfig := &container.HostConfig{
 		AutoRemove: true,
 		Resources: container.Resources{
