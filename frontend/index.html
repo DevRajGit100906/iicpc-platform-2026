@@ -2,74 +2,151 @@
 <html>
 <head>
     <title>IICPC Live Leaderboard</title>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script crossorigin src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js">
+    </script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js">
+    </script>
+    <script crossorigin src="https://unpkg.com/babel-standalone@6/babel.min.js">
+    </script>
     <style>
-        body { font-family: 'Courier New', Courier, monospace; background: #0d1117; color: #58a6ff; padding: 40px; }
-        h1 { color: #c9d1d9; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
-        table { width: 80%; border-collapse: collapse; margin-top: 20px; background: #161b22; }
-        th, td { border: 1px solid #30363d; padding: 15px; text-align: left; }
-        th { background: #21262d; color: #c9d1d9; }
-        .live-pulse { color: #3fb950; animation: blinker 1.5s linear infinite; font-weight: bold;}
-        @keyframes blinker { 50% { opacity: 0; } }
-
-        /* Dynamic Status Badges */
-        .status-badge { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.9em; }
-        .bg-building { background: #d29922; color: #ffffff; }
-        .bg-running { background: #238636; color: #ffffff; }
-        .bg-finished { background: #8b949e; color: #ffffff; }
-        .bg-unknown { background: #21262d; color: #c9d1d9; }
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background: #0d1117;
+            color: #58a6ff;
+            padding: 40px;
+        }
+        h1 {
+            color: #c9d1d9;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 10px;
+        }
+        .sub {
+            color: #8b949e;
+            font-size: 0.85em;
+            margin-top: -6px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background: #161b22;
+        }
+        th,
+        td {
+            border: 1px solid #30363d;
+            padding: 12px 14px;
+            text-align: left;
+        }
+        th {
+            background: #21262d;
+            color: #c9d1d9;
+        }
+        .live-pulse {
+            color: #3fb950;
+            animation: blinker 1.5s linear infinite;
+            font-weight: bold;
+        }
+        @keyframes blinker {
+            50% {
+                opacity: 0;
+            }
+        }
+        .num {
+            color: #c9d1d9;
+        }
+        .score {
+            font-weight: bold;
+            color: #d2a8ff;
+        }
+        .score.gated {
+            color: #f85149;
+            text-decoration: line-through;
+        }
+        .badge {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.85em;
+        }
+        .ok {
+            background: #238636;
+            color: #fff;
+        }
+        .bad {
+            background: #da3633;
+            color: #fff;
+        }
+        .st-building {
+            background: #d29922;
+            color: #fff;
+        }
+        .st-checking {
+            background: #1f6feb;
+            color: #fff;
+        }
+        .st-running {
+            background: #238636;
+            color: #fff;
+        }
+        .st-finished {
+            background: #6e7681;
+            color: #fff;
+        }
+        .st-failed {
+            background: #da3633;
+            color: #fff;
+        }
+        .st-unknown {
+            background: #21262d;
+            color: #c9d1d9;
+        }
     </style>
 </head>
 <body>
     <div id="root"></div>
-
     <script type="text/babel">
         const { useState, useEffect } = React;
-
+        function statusClass(s) {
+            const m = {
+                BUILDING: "st-building", DEPLOYING: "st-checking", CHECKING: "st-checking",
+                RUNNING: "st-running", FINISHED: "st-finished", FAILED: "st-failed"
+            };
+            return m[s] || "st-unknown";
+        }
         function Leaderboard() {
             const [board, setBoard] = useState([]);
-
             useEffect(() => {
                 const ws = new WebSocket("ws://localhost:8081/ws");
-                ws.onmessage = (event) => {
-                    setBoard(JSON.parse(event.data));
-                };
+                ws.onmessage = (e) => setBoard(JSON.parse(e.data) || []);
                 return () => ws.close();
             }, []);
-
-            // Map the Redis state to a CSS color class
-            const getStatusClass = (status) => {
-                if (status === "BUILDING") return "bg-building";
-                if (status === "RUNNING") return "bg-running";
-                if (status === "FINISHED") return "bg-finished";
-                return "bg-unknown";
-            };
-
             return (
                 <div>
                     <h1>IICPC Live Leaderboard <span className="live-pulse">● LIVE</span></h1>
+                    <div className="sub">composite = 0.30·latency + 0.25·throughput + 0.45·correctness &nbsp;·&nbsp; correctness failure caps the score (gate)</div>
                     <table>
                         <thead>
                             <tr>
-                                <th>Rank</th>
-                                <th>Run ID</th>
-                                <th>Match State</th>
-                                <th>Composite Score</th>
+                                <th>Rank</th><th>Run ID</th><th>Status</th>
+                                <th>Correctness</th><th>p99 (µs)</th><th>TPS</th><th>Score</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {board.map((row, idx) => (
+                            {board.map((row, i) => (
                                 <tr key={row.run_id}>
-                                    <td>{idx + 1}</td>
-                                    <td style={{color: '#c9d1d9'}}>{row.run_id}</td>
+                                    <td className="num">{i + 1}</td>
+                                    <td className="num">{row.run_id}</td>
+                                    <td><span className={"badge " + statusClass(row.status)}>{row.status}</span></td>
                                     <td>
-                                        <span className={`status-badge ${getStatusClass(row.status)}`}>
-                                            {row.status}
+                                        <span className={"badge " + (row.passed ? "ok" : "bad")}>
+                                            {row.passed ? "✓" : "✗"} {(row.correctness * 100).toFixed(0)}%
                                         </span>
                                     </td>
-                                    <td style={{color: '#d2a8ff', fontWeight: 'bold'}}>{row.score.toFixed(2)}</td>
+                                    <td className="num">{row.p99_us ? row.p99_us.toLocaleString() : "—"}</td>
+                                    <td className="num">{row.tps ? Math.round(row.tps).toLocaleString() : "—"}</td>
+                                    <td className={"score" + (row.gated ? " gated" : "")} title={row.gated ? "capped by correctness gate" : ""}>
+                                        {row.score.toFixed(2)}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -77,9 +154,7 @@
                 </div>
             );
         }
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<Leaderboard />);
+        ReactDOM.createRoot(document.getElementById('root')).render(<Leaderboard />);
     </script>
 </body>
 </html>

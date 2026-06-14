@@ -1,29 +1,21 @@
 syntax = "proto3";
-
 package iicpc.v1;
-
-option go_package = "github.com/YOUR_USERNAME/iicpc-platform-2026/schemas/v1";
-
-// Topic: orders
+option go_package = "github.com/devrajdas/iicpc-platform-2026/schemas/iicpc/v1";
 message Order {
   string run_id = 1;
   int64 sequence_number = 2;
-  string order_type = 3; // "LIMIT", "MARKET", "CANCEL"
-  string side = 4;       // "BUY", "SELL"
+  string order_type = 3;
+  string side = 4;
   int32 quantity = 5;
-  int64 price = 6;       // Fixed point representation (e.g., multiply by 10000)
-  int64 intended_send_ts = 7; // For Coordinated Omission correction
+  int64 price = 6;
+  int64 intended_send_ts = 7;
 }
-
-// Topic: acks
 message Ack {
   string run_id = 1;
   int64 sequence_number = 2;
-  string status = 3;     // "ACCEPTED", "REJECTED", "FILLED"
+  string status = 3;
   int64 ack_ts = 4;
 }
-
-// Topic: telemetry
 message Telemetry {
   string run_id = 1;
   int64 send_ts = 2;
@@ -31,9 +23,7 @@ message Telemetry {
   int32 latency_us = 4;
   string error_code = 5;
 }
-
-// Topic: run-events
 message RunEvent {
   string run_id = 1;
-  string state = 2; // "WARMING", "READY", "TESTING", "DONE", "FAILED"
+  string state = 2;
 }
